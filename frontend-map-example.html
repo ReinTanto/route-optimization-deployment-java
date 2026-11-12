@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Route Map — Minimal Example</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #0f1115; color: #e6e9ef; }
+  #map { height: 520px; border-radius: 10px; border: 1px solid #2e333d; }
+  .legend { font-size: 13px; margin: 10px 0; display: flex; gap: 16px; flex-wrap: wrap; color: #8b93a1; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .status { font-size: 13px; color: #8b93a1; min-height: 20px; }
+  .status.err { color: #ff5c6c; }
+  .status.ok { color: #34d17b; }
+  .card { background: #1a1d24; border: 1px solid #2e333d; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #8b93a1; font-size: 13px; margin-bottom: 14px; }
+  label { display: block; font-size: 12px; color: #8b93a1; margin-bottom: 4px; }
+  input { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #2e333d; background: #22262f; color: #e6e9ef; font-size: 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  button { border: none; border-radius: 8px; padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; background: #4f8cff; color: #fff; margin-top: 12px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<h1>Route Map — Minimal Working Example</h1>
+<div class="sub">VROOM (order) + OSRM (per-leg road geometry) + Leaflet/OSM (render). Self-contained — open and run.</div>
+
+<div class="card">
+  <div class="row">
+    <div><label>VROOM base</label><input id="vroomBase" value="http://192.168.6.242:3080"></div>
+    <div><label>OSRM base</label><input id="osrmBase" value="http://192.168.6.242:5000"></div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div><label>Start (lon, lat)</label><input id="start" value="106.8456, -6.2088"></div>
+    <div><label>End (lon, lat)</label><input id="end" value="106.8456, -6.2088"></div>
+    <div><label>Capacity</label><input id="capacity" type="number" value="1000"></div>
+    <div><label>Service (sec)</label><input id="service" type="number" value="120"></div>
+  </div>
+  <div style="margin-top:10px">
+    <label>Stops (one per line: lon, lat)</label>
+    <textarea id="stops" rows="4" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid #2e333d;background:#22262f;color:#e6e9ef;font-size:14px;font-family:inherit">106.8217, -6.1853
+106.8555, -6.1975
+106.8427, -6.1690</textarea>
+  </div>
+  <button id="run">Optimize + draw route</button>
+</div>
+
+<div class="legend">
+  <span><span class="dot" style="background:#4f8cff"></span> Start</span>
+  <span><span class="dot" style="background:#ffb347"></span> Stops (in order)</span>
+  <span><span class="dot" style="background:#34d17b"></span> End</span>
+  <span>— route (real roads)</span>
+</div>
+<div id="map"></div>
+<div class="status" id="status"></div>
+
+<script>
+/*
+ * MINIMAL, SELF-CONTAINED EXAMPLE — how to render the optimized route on an OSM map.
+ *
+ * Division of labor (important):
+ *   - VROOM  -> the optimized ORDER (no geometry)
+ *   - OSRM   -> the road GEOMETRY for ONE leg (A -> B)
+ *   - THIS   -> stitches the legs + renders on Leaflet/OSM
+ *
+ * The API does NOT stitch or render. Both happen here, client-side.
+ */
+
+let map = null, routeLayer = null;
+function initMap() {
+  if (map) return;
+  map = L.map('map').setView([-6.2, 106.84], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+}
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('status');
+  el.textContent = msg || '';
+  el.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+function parseCoord(s) {
+  const p = s.split(',').map(x => parseFloat(x.trim()));
+  return (p.length === 2 && !p.some(isNaN)) ? [p[0], p[1]] : null; // [lon, lat]
+}
+
+/* STEP 1: call VROOM, return the ordered [lon,lat] list (start, stops, end). */
+async function getOptimizedOrder(vroomBase, start, end, capacity, service, stopCoords) {
+  const jobs = stopCoords.map((loc, i) => ({ id: i + 1, location: loc, delivery: [1], service }));
+  const body = {
+    vehicles: [{ id: 1, start, end, capacity: [capacity] }],
+    jobs
+  };
+  const res = await fetch(vroomBase + '/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const d = await res.json();
+  if (d.code !== 0) throw new Error(d.error || ('VROOM error ' + d.code));
+  // Collect each step's location in order.
+  return d.routes[0].steps.filter(s => s.location).map(s => s.location);
+}
+
+/* STEP 2+3: fetch per-leg OSRM geometry and stitch into one [lon,lat] polyline. */
+async function stitchRoute(osrmBase, order) {
+  const full = [];
+  for (let i = 0; i < order.length - 1; i++) {
+    const a = order[i], b = order[i + 1];
+    const url = `${osrmBase}/route/v1/car/${a[0]},${a[1]};${b[0]},${b[1]}?overview=full&geometries=geojson`;
+    try {
+      const j = await (await fetch(url)).json();
+      if (j.code === 'Ok' && j.routes[0].geometry) {
+        const coords = j.routes[0].geometry.coordinates;
+        if (i > 0) coords.shift(); // drop the duplicated shared node
+        full.push(...coords);
+      } else {
+        if (i > 0) full.push(a);  // fallback: straight line for this leg
+        full.push(b);
+      }
+    } catch (e) {
+      if (i > 0) full.push(a);
+      full.push(b);
+    }
+  }
+  return full;
+}
+
+/* STEP 4: render the stitched polyline + markers on the OSM map. */
+function renderRoute(order, full) {
+  initMap();
+  if (routeLayer) map.removeLayer(routeLayer);
+  routeLayer = L.layerGroup().addTo(map);
+  if (full.length) {
+    L.polyline(full.map(c => [c[1], c[0]]), { color: '#4f8cff', weight: 4, opacity: 0.85 }).addTo(routeLayer);
+  }
+  order.forEach((p, i) => {
+    const color = i === 0 ? '#4f8cff' : (i === order.length - 1 ? '#34d17b' : '#ffb347');
+    L.circleMarker([p[1], p[0]], { radius: 9, color, fillColor: color, fillOpacity: 1, weight: 2 }).addTo(routeLayer);
+  });
+  map.fitBounds(L.latLngBounds(order.map(p => [p[1], p[0]])), { padding: [40, 40] });
+}
+
+document.getElementById('run').onclick = async () => {
+  const vroomBase = document.getElementById('vroomBase').value.trim().replace(/\/$/, '');
+  const osrmBase  = document.getElementById('osrmBase').value.trim().replace(/\/$/, '');
+  const start = parseCoord(document.getElementById('start').value);
+  const end   = parseCoord(document.getElementById('end').value);
+  const capacity = parseInt(document.getElementById('capacity').value, 10) || 1000;
+  const service  = parseInt(document.getElementById('service').value, 10) || 0;
+  if (!start || !end) return setStatus('Invalid start/end. Use "lon, lat".', 'err');
+
+  const stopCoords = [];
+  document.getElementById('stops').value.split('\n').forEach(line => {
+    const c = parseCoord(line);
+    if (c) stopCoords.push(c);
+  });
+  if (!stopCoords.length) return setStatus('Add at least one stop.', 'err');
+
+  const btn = document.getElementById('run');
+  btn.disabled = true;
+  setStatus('Optimizing…');
+  try {
+    const order = await getOptimizedOrder(vroomBase, start, end, capacity, service, stopCoords);
+    const full  = await stitchRoute(osrmBase, order);
+    renderRoute(order, full);
+    setStatus('Done — ' + stopCoords.length + ' stops, route drawn.', 'ok');
+  } catch (e) {
+    setStatus('Failed: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
