@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  osrm-car:
+    # PINNED by digest: the pre-built .osrm data must be served by the same
+    # OSRM version that built it, or it is rejected as incompatible.
+    # If you rebuild the data, update this digest to match.
+    image: ghcr.io/project-osrm/osrm-backend@sha256:55dbfd47d984c2cacd64e32901b4321c86b5ec761438e69aa053dc78698a786f
+    container_name: osrm-car
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./osrm-data:/data
+    # OSRM is pre-processed offline (see README "Pre-processing").
+    # This command serves the pre-built routing data.
+    command: osrm-routed --algorithm mld /data/java-latest.osrm
+
+  vroom:
+    image: ghcr.io/vroom-project/vroom-docker:v1.14.0
+    container_name: vroom-optimizer
+    restart: unless-stopped
+    # Host port 3080 -> container 3000 (avoids clash with other services on 3000).
+    ports:
+      - "3080:3000"
+    environment:
+      - VROOM_ROUTER=osrm
+    volumes:
+      - ./vroom-conf:/conf
+    depends_on:
+      - osrm-car

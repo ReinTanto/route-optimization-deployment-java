@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Route Optimizer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #1a1d24; --panel2: #22262f; --border: #2e333d;
+    --text: #e6e9ef; --muted: #8b93a1; --accent: #4f8cff; --accent2: #34d17b;
+    --error: #ff5c6c; --warn: #ffb347;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input, select {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+    font-size: 14px; font-family: inherit;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 140px; }
+  .coords { margin-top: 14px; }
+  .coord-row {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
+  }
+  .coord-row .idx {
+    width: 26px; height: 26px; border-radius: 50%; background: var(--panel2);
+    border: 1px solid var(--border); display: flex; align-items: center;
+    justify-content: center; font-size: 12px; color: var(--muted); flex-shrink: 0;
+  }
+  .coord-row input { flex: 1; min-width: 0; }
+  .btn {
+    border: none; border-radius: 8px; padding: 10px 16px; font-size: 14px;
+    font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: transform .05s, opacity .15s;
+  }
+  .btn:active { transform: scale(.98); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn-sm { padding: 6px 10px; font-size: 13px; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .status { font-size: 13px; margin-top: 12px; min-height: 20px; }
+  .status.err { color: var(--error); }
+  .status.ok { color: var(--accent2); }
+  .status.warn { color: var(--warn); }
+  .result-head { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { }
+  .stat .n { font-size: 26px; font-weight: 700; }
+  .stat .l { font-size: 12px; color: var(--muted); }
+  .route-card {
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; margin-bottom: 12px;
+  }
+  .route-card h3 { margin: 0 0 10px; font-size: 15px; }
+  .step {
+    display: flex; align-items: center; gap: 12px; padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .step:last-child { border-bottom: none; }
+  .step .badge {
+    width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+  }
+  .badge.start { background: rgba(79,140,255,.18); color: var(--accent); }
+  .badge.end { background: rgba(52,209,123,.18); color: var(--accent2); }
+  .badge.job { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+  .step .info { flex: 1; min-width: 0; }
+  .step .info .t { font-size: 14px; }
+  .step .info .c { font-size: 12px; color: var(--muted); }
+  .step .time { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 20px;
+    font-size: 11px; background: var(--panel); border: 1px solid var(--border);
+    color: var(--muted); margin-left: 6px;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .hidden { display: none; }
+  #map { height: 420px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 12px; }
+  .legend { font-size: 12px; color: var(--muted); margin-bottom: 8px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Route Optimizer</h1>
+  <div class="sub">Enter a start point and stop coordinates — get back the best visiting order (VROOM + OSRM, car roads only).</div>
+
+  <!-- API config -->
+  <div class="card">
+    <label>API base (VROOM)</label>
+    <input id="apiBase" value="http://192.168.6.242:3080" spellcheck="false">
+    <div class="hint">The VROOM server. OSRM is called by VROOM automatically — you only talk to VROOM.</div>
+  </div>
+
+  <!-- Vehicle -->
+  <div class="card">
+    <label>Vehicle</label>
+    <div class="row">
+      <div>
+        <label>Start (lon, lat)</label>
+        <input id="start" value="106.8456, -6.2088" spellcheck="false">
+      </div>
+      <div>
+        <label>End (lon, lat) — same as start for a round trip</label>
+        <input id="end" value="106.8456, -6.2088" spellcheck="false">
+      </div>
+      <div>
+        <label>Capacity</label>
+        <input id="capacity" type="number" value="1000" min="1">
+      </div>
+      <div>
+        <label>Service time per stop (sec)</label>
+        <input id="service" type="number" value="120" min="0">
+      </div>
+    </div>
+  </div>
+
+  <!-- Stops -->
+  <div class="card">
+    <label>Stops (one per line, <span class="mono">lon, lat</span>)</label>
+    <div class="coords" id="coords"></div>
+    <div class="actions">
+      <button class="btn btn-ghost btn-sm" id="addRow">+ Add stop</button>
+      <button class="btn btn-ghost btn-sm" id="clearRows">Clear</button>
+    </div>
+  </div>
+
+  <!-- Run -->
+  <div class="actions">
+    <button class="btn btn-primary" id="run">Optimize route</button>
+  </div>
+  <div class="status" id="status"></div>
+
+  <!-- Results -->
+  <div id="results" class="hidden">
+    <div class="card" style="margin-top:16px">
+      <div class="result-head" id="summary"></div>
+      <div class="legend">
+        <span><span class="dot" style="background:#4f8cff"></span> Start</span>
+        <span><span class="dot" style="background:#ffb347"></span> Stops (in order)</span>
+        <span><span class="dot" style="background:#34d17b"></span> End</span>
+        <span style="color:#8b93a1">— route (real roads)</span>
+      </div>
+      <div id="map"></div>
+      <div id="routes"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const coordsEl = document.getElementById('coords');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+
+// Leaflet map (lazy-initialized on first result)
+let map = null;
+let routeLayer = null;
+function initMap() {
+  if (map) return;
+  map = L.map('map').setView([-6.2, 106.84], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+}
+
+function setStatus(msg, cls) {
+  statusEl.textContent = msg || '';
+  statusEl.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+function makeRow(lon = '', lat = '') {
+  const row = document.createElement('div');
+  row.className = 'coord-row';
+  row.innerHTML =
+    '<span class="idx"></span>' +
+    '<input class="clon" placeholder="lon" spellcheck="false" value="' + lon + '">' +
+    '<input class="clat" placeholder="lat" spellcheck="false" value="' + lat + '">';
+  const del = document.createElement('button');
+  del.className = 'btn btn-ghost btn-sm';
+  del.textContent = '×';
+  del.onclick = () => { row.remove(); reindex(); };
+  row.appendChild(del);
+  coordsEl.appendChild(row);
+  reindex();
+}
+
+function reindex() {
+  const rows = coordsEl.querySelectorAll('.coord-row');
+  rows.forEach((r, i) => { r.querySelector('.idx').textContent = i + 1; });
+}
+
+// 3 starter rows
+makeRow('106.8217', '-6.1853');
+makeRow('106.8555', '-6.1975');
+makeRow('106.8427', '-6.1690');
+
+document.getElementById('addRow').onclick = () => makeRow();
+document.getElementById('clearRows').onclick = () => { coordsEl.innerHTML = ''; makeRow(); };
+
+function parseCoord(s) {
+  const parts = s.split(',').map(x => parseFloat(x.trim()));
+  if (parts.length !== 2 || parts.some(isNaN)) return null;
+  return [parts[0], parts[1]]; // [lon, lat]
+}
+
+function fmtSec(s) {
+  s = Math.round(s);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? m + 'm ' + sec + 's' : sec + 's';
+}
+
+document.getElementById('run').onclick = async () => {
+  const base = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
+  const start = parseCoord(document.getElementById('start').value);
+  const end = parseCoord(document.getElementById('end').value);
+  const capacity = parseInt(document.getElementById('capacity').value, 10) || 1000;
+  const service = parseInt(document.getElementById('service').value, 10) || 0;
+
+  if (!start) return setStatus('Invalid start coordinate. Use "lon, lat".', 'err');
+  if (!end) return setStatus('Invalid end coordinate. Use "lon, lat".', 'err');
+
+  const jobs = [];
+  const rows = coordsEl.querySelectorAll('.coord-row');
+  rows.forEach((r, i) => {
+    const lon = r.querySelector('.clon').value.trim();
+    const lat = r.querySelector('.clat').value.trim();
+    if (!lon && !lat) return; // skip empty rows
+    const loc = parseCoord(lon + ', ' + lat);
+    if (!loc) return setStatus('Stop ' + (i + 1) + ': invalid coordinate. Use "lon, lat".', 'err');
+    jobs.push({ id: i + 1, location: loc, delivery: [1], service: service });
+  });
+  if (jobs.length === 0) return setStatus('Add at least one stop.', 'err');
+
+  const body = {
+    vehicles: [{ id: 1, start: start, end: end, capacity: [capacity] }],
+    jobs: jobs
+  };
+
+  const btn = document.getElementById('run');
+  btn.disabled = true;
+  setStatus('Optimizing…');
+  resultsEl.classList.add('hidden');
+
+  try {
+    const res = await fetch(base + '/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+    if (d.code !== 0) throw new Error(d.error || ('VROOM error code ' + d.code));
+    render(d);
+    setStatus('Done — optimized ' + jobs.length + ' stops.', 'ok');
+  } catch (e) {
+    setStatus('Failed: ' + e.message + ' (check the API base / CORS).', 'err');
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+function render(d) {
+  const s = d.summary;
+  document.getElementById('summary').innerHTML =
+    '<div class="stat"><div class="n">' + s.cost + 's</div><div class="l">total cost</div></div>' +
+    '<div class="stat"><div class="n">' + (s.cost / 60).toFixed(0) + ' min</div><div class="l">drive time</div></div>' +
+    '<div class="stat"><div class="n">' + s.unassigned + '</div><div class="l">unassigned</div></div>' +
+    '<div class="stat"><div class="n">' + jobsCount() + '</div><div class="l">stops</div></div>';
+
+  const routesEl = document.getElementById('routes');
+  routesEl.innerHTML = '';
+  d.routes.forEach(r => {
+    const card = document.createElement('div');
+    card.className = 'route-card';
+    let html = '<h3>Vehicle ' + r.vehicle + ' <span class="pill">' + fmtSec(r.cost) + '</span></h3>';
+    r.steps.forEach(st => {
+      let badge, title, coords = '';
+      if (st.type === 'start') { badge = 'start'; title = 'Start'; }
+      else if (st.type === 'end') { badge = 'end'; title = 'End'; }
+      else { badge = 'job'; title = 'Stop ' + st.id; }
+      if (st.location) coords = ' <span class="mono">(' + st.location[0].toFixed(4) + ', ' + st.location[1].toFixed(4) + ')</span>';
+      const time = (st.type === 'start') ? '' : '<div class="time">arrives ' + fmtSec(st.arrival) + '</div>';
+      html +=
+        '<div class="step">' +
+          '<div class="badge ' + badge + '">' + (badge === 'job' ? st.id : (badge === 'start' ? 'S' : 'E')) + '</div>' +
+          '<div class="info"><div class="t">' + title + coords + '</div></div>' +
+          time +
+        '</div>';
+    });
+    card.innerHTML = html;
+    routesEl.appendChild(card);
+  });
+  resultsEl.classList.remove('hidden');
+  drawRoute(d);
+}
+
+function jobsCount() {
+  return coordsEl.querySelectorAll('.coord-row').length;
+}
+
+// Draw the optimized route on the map using real OSRM road geometry.
+async function drawRoute(d) {
+  const base = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
+  const osrmBase = base.replace(/:3080$/, ':5000'); // VROOM and OSRM share the host
+  initMap();
+  if (routeLayer) map.removeLayer(routeLayer);
+  routeLayer = L.layerGroup().addTo(map);
+
+  // Collect the ordered list of [lon, lat] from the first vehicle's steps.
+  const r = d.routes[0];
+  const points = [];
+  r.steps.forEach(st => { if (st.location) points.push(st.location); });
+  if (points.length < 2) return;
+
+  // Fetch real road geometry for each leg and stitch into one polyline.
+  const full = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    try {
+      const url = osrmBase + '/route/v1/car/' + a[0] + ',' + a[1] + ';' + b[0] + ',' + b[1] + '?overview=full&geometries=geojson';
+      const res = await fetch(url);
+      const j = await res.json();
+      if (j.code === 'Ok' && j.routes && j.routes[0].geometry) {
+        const coords = j.routes[0].geometry.coordinates;
+        if (i > 0) coords.shift(); // avoid duplicating the shared node
+        full.push(...coords);
+      } else {
+        // Fallback: straight line for this leg.
+        if (i > 0) full.push(a);
+        full.push(b);
+      }
+    } catch (e) {
+      if (i > 0) full.push(a);
+      full.push(b);
+    }
+  }
+
+  if (full.length) {
+    // Leaflet wants [lat, lon].
+    const latlngs = full.map(c => [c[1], c[0]]);
+    L.polyline(latlngs, { color: '#4f8cff', weight: 4, opacity: 0.85 }).addTo(routeLayer);
+  }
+
+  // Markers: start (blue), stops (orange, numbered), end (green).
+  let stopN = 0;
+  r.steps.forEach(st => {
+    if (!st.location) return;
+    const ll = [st.location[1], st.location[0]];
+    if (st.type === 'start') {
+      L.circleMarker(ll, { radius: 9, color: '#4f8cff', fillColor: '#4f8cff', fillOpacity: 1, weight: 2 }).addTo(routeLayer)
+        .bindPopup('Start');
+    } else if (st.type === 'end') {
+      L.circleMarker(ll, { radius: 9, color: '#34d17b', fillColor: '#34d17b', fillOpacity: 1, weight: 2 }).addTo(routeLayer)
+        .bindPopup('End');
+    } else {
+      stopN++;
+      L.circleMarker(ll, { radius: 9, color: '#ffb347', fillColor: '#ffb347', fillOpacity: 1, weight: 2 }).addTo(routeLayer)
+        .bindPopup('Stop ' + st.id);
+    }
+  });
+
+  // Fit to the stop points (layerGroup has no getBounds).
+  const bounds = L.latLngBounds(points.map(p => [p[1], p[0]]));
+  map.fitBounds(bounds, { padding: [40, 40] });
+}
+</script>
+</body>
+</html>
