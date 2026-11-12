@@ -340,6 +340,77 @@ curl "http://192.168.6.242:5000/nearest/v1/car/106.8456,-6.2088?number=5"
 
 ---
 
+## 4.5 Displaying the map with the route in your own apps
+
+The route is **not** returned as one geometry. VROOM gives you the optimized
+*order*; OSRM gives you the *road geometry* for a single leg. To draw the full
+route on a map you combine them:
+
+1. **Get the order** — `POST /` to VROOM. Read `routes[].steps[]` and collect
+   each step's `location` (`[lon, lat]`) in order: start → stops → end.
+2. **Fetch the road geometry per leg** — for each consecutive pair
+   `(step[i], step[i+1])`, call OSRM
+   `GET /route/v1/car/{lon},{lat};{lon},{lat}?overview=full&geometries=geojson`
+   and read `routes[0].geometry.coordinates` (a `[lon, lat]` polyline of the real
+   road).
+3. **Stitch the legs** — concatenate the per-leg polylines, dropping the first
+   point of each leg after the first (it duplicates the shared node).
+4. **Render** — plot the stitched polyline plus a marker per point.
+
+### Leaflet + OpenStreetMap (no API key)
+
+```html
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<div id="map" style="height:420px"></div>
+<script>
+const map = L.map('map').setView([-6.2, 106.84], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+async function drawRoute(order, osrmBase) {
+  // order: [[lon, lat], ...] in optimized order (start, stops, end)
+  const full = [];
+  for (let i = 0; i < order.length - 1; i++) {
+    const [a, b] = [order[i], order[i + 1]];
+    const url = `${osrmBase}/route/v1/car/${a[0]},${a[1]};${b[0]},${b[1]}?overview=full&geometries=geojson`;
+    const j = await (await fetch(url)).json();
+    if (j.code === 'Ok' && j.routes[0].geometry) {
+      const coords = j.routes[0].geometry.coordinates;
+      if (i > 0) coords.shift();          // drop the duplicated shared node
+      full.push(...coords);
+    } else {
+      if (i > 0) full.push(a);            // fallback: straight line
+      full.push(b);
+    }
+  }
+  // Leaflet wants [lat, lon].
+  L.polyline(full.map(c => [c[1], c[0]]), { color: '#4f8cff', weight: 4 }).addTo(map);
+  order.forEach((p, i) => {
+    L.circleMarker([p[1], p[0]], { radius: 8, color: i === 0 ? '#4f8cff' : i === order.length - 1 ? '#34d17b' : '#ffb347', fillOpacity: 1 }).addTo(map);
+  });
+  map.fitBounds(L.latLngBounds(order.map(p => [p[1], p[0]])), { padding: [40, 40] });
+}
+
+// Example: VROOM result -> draw
+// const order = vroomResponse.routes[0].steps.filter(s => s.location).map(s => s.location);
+// drawRoute(order, 'http://192.168.6.242:5000');
+</script>
+```
+
+### Notes
+- **`[lon, lat]` → `[lat, lon]`:** OSRM returns `[lon, lat]`; Leaflet wants
+  `[lat, lon]`. Swap when plotting.
+- **One OSRM call per leg:** N stops = N-1 OSRM calls. For a single vehicle this
+  is cheap; for many vehicles/legs, batch or cache.
+- **No API key needed:** OpenStreetMap tiles are free. For high volume, consider
+  a tile provider with a key (Mapbox, etc.) — only the tile URL changes.
+- **The full working example** is `route-optimizer.html` in this repo — read its
+  `drawRoute()` function for the exact, tested implementation.
+
+---
+
 ## 5. Architecture
 
 ```

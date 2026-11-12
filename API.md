@@ -298,7 +298,55 @@ meters).
 
 ---
 
-## 3. Quick error reference
+## 3. Displaying the map with the route
+
+The route is **not** a single geometry. VROOM returns the optimized *order*;
+OSRM returns the *road geometry* for one leg. To render the full route on a map:
+
+1. **Order** — `POST /` to VROOM; collect `routes[].steps[].location`
+   (`[lon, lat]`) in order: start → stops → end.
+2. **Per-leg geometry** — for each consecutive pair, call OSRM
+   `GET /route/v1/car/{lon},{lat};{lon},{lat}?overview=full&geometries=geojson`
+   and read `routes[0].geometry.coordinates`.
+3. **Stitch** — concatenate the leg polylines, dropping the first point of each
+   leg after the first (it duplicates the shared node).
+4. **Render** — plot the polyline + a marker per point.
+
+**Leaflet + OpenStreetMap (no API key):**
+```js
+const map = L.map('map').setView([-6.2, 106.84], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+async function drawRoute(order, osrmBase) {
+  const full = [];
+  for (let i = 0; i < order.length - 1; i++) {
+    const [a, b] = [order[i], order[i + 1]];
+    const url = `${osrmBase}/route/v1/car/${a[0]},${a[1]};${b[0]},${b[1]}?overview=full&geometries=geojson`;
+    const j = await (await fetch(url)).json();
+    if (j.code === 'Ok' && j.routes[0].geometry) {
+      const c = j.routes[0].geometry.coordinates;
+      if (i > 0) c.shift();
+      full.push(...c);
+    } else { if (i > 0) full.push(a); full.push(b); }
+  }
+  L.polyline(full.map(c => [c[1], c[0]]), { color: '#4f8cff', weight: 4 }).addTo(map);
+  order.forEach((p, i) => L.circleMarker([p[1], p[0]], { radius: 8, fillOpacity: 1 }).addTo(map));
+  map.fitBounds(L.latLngBounds(order.map(p => [p[1], p[0]])), { padding: [40, 40] });
+}
+```
+
+**Gotchas:**
+- OSRM is `[lon, lat]`; Leaflet wants `[lat, lon]` — swap when plotting.
+- N stops = N-1 OSRM calls (one per leg).
+- OSM tiles need no key; for high volume use a keyed tile provider (only the
+  tile URL changes).
+- The full tested implementation is `route-optimizer.html` → `drawRoute()`.
+
+---
+
+## 4. Quick error reference
 
 | Service | Success | Failure signals |
 |---------|---------|-----------------|
