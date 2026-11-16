@@ -31,6 +31,11 @@ optimizer. VROOM just consumes the routes OSRM gives it.
 8. [Operations](#8-operations)
 9. [Pitfalls](#9-pitfalls)
 
+**Standalone guides:**
+- [**DEPLOYMENT.md**](DEPLOYMENT.md) — full step-by-step Proxmox/LXC deployment, every pitfall + fix
+- [**API-USAGE.md**](API-USAGE.md) — how to call the API from your own app (cURL / JS / Python / Go) + map rendering
+- [**API.md**](API.md) — complete field-by-field reference (VROOM + OSRM)
+
 ---
 
 ## 1. The web UI
@@ -546,6 +551,8 @@ down && up -d`.
 ```
 route-optimization-deployment-java/
 ├── README.md                  # this file
+├── DEPLOYMENT.md              # full step-by-step Proxmox/LXC deployment guide
+├── API-USAGE.md               # how to call the API from your app (cURL/JS/Python/Go)
 ├── API.md                     # complete API reference (VROOM + OSRM)
 ├── docs-screenshot.png        # the web UI
 ├── route-optimizer.html       # full web UI (map + optimized order) — see screenshot
